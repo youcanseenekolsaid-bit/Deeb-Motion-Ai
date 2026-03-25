@@ -2,7 +2,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-export async function generateVideoScript(prompt: string, durationInSeconds: number, fps: number = 30, currentCode?: string) {
+export async function generateVideoScript(prompt: string, durationInSeconds: number, fps: number = 30, currentCode?: string, imageBase64?: string) {
   try {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!apiKey) {
@@ -114,9 +114,13 @@ Text shadows or glows to improve readability
 Smooth easing on all transitions
 `;
 
-    const userContent = currentCode 
+    const userText = currentCode 
       ? `Current Code:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n\nUser Request: "${prompt}"\n\nPlease modify the current code to fulfill the user's request.`
       : `User Prompt: "${prompt}"`;
+
+    const userContent: any = imageBase64 
+      ? { parts: [{ text: userText }, { inlineData: { data: imageBase64.split(',')[1] || imageBase64, mimeType: imageBase64.split(';')[0].split(':')[1] || 'image/jpeg' } }] }
+      : userText;
 
     const config = {
       systemInstruction: systemPrompt + "\n\nCRITICAL: Ensure the generated code is valid TypeScript and JSX. Do not use unescaped characters in JSX text. Always close tags properly. Do not use any undefined variables.",
@@ -147,11 +151,20 @@ Smooth easing on all transitions
       });
     } catch (primaryError: any) {
       console.warn("Primary model (gemini-3.1-pro-preview) failed, falling back to gemini-3-pro-preview. Error:", primaryError.message);
-      response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview",
-        contents: userContent,
-        config
-      });
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3-pro-preview",
+          contents: userContent,
+          config
+        });
+      } catch (secondaryError: any) {
+        console.warn("Secondary model (gemini-3-pro-preview) failed, falling back to gemini-3-flash-preview. Error:", secondaryError.message);
+        response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: userContent,
+          config
+        });
+      }
     }
 
     const jsonStr = response.text?.trim() || "{}";

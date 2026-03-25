@@ -89,6 +89,7 @@ type Message = {
   id: string;
   role: "user" | "ai";
   content: string;
+  image?: string;
 };
 
 function CreateContent() {
@@ -105,6 +106,8 @@ function CreateContent() {
     { id: "1", role: "ai", content: t("create.initialAiMsg") }
   ]);
   const [input, setInput] = useState("");
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedCode, setGeneratedCode] = useState<string>("");
   const [isRendering, setIsRendering] = useState(false);
@@ -240,11 +243,11 @@ function CreateContent() {
     return () => clearTimeout(timeoutId);
   }, [generatedCode, messages, user, projectId, projectTitle, ratio, durationInSeconds]);
 
-  const handleGenerateVideo = async (userPrompt: string, currentCode?: string) => {
+  const handleGenerateVideo = async (userPrompt: string, currentCode?: string, imageBase64?: string) => {
     setIsGenerating(true);
     
     try {
-      const result = await generateVideoScript(userPrompt, durationInSeconds, fps, currentCode);
+      const result = await generateVideoScript(userPrompt, durationInSeconds, fps, currentCode, imageBase64);
       
       if (result.success && result.code) {
         setGeneratedCode(result.code);
@@ -393,15 +396,28 @@ function CreateContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, initialMode]);
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setSelectedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isGenerating) return;
+    if ((!input.trim() && !selectedImage) || isGenerating) return;
     
-    const userMsg = input.trim();
+    const userMsg = input.trim() || (language === "ar" ? "صورة مرفقة" : "Attached image");
+    const currentImage = selectedImage;
     
-    setMessages(prev => [...prev, { id: generateId(), role: "user", content: userMsg }]);
+    setMessages(prev => [...prev, { id: generateId(), role: "user", content: userMsg, image: currentImage || undefined }]);
     setInput("");
-    handleGenerateVideo(userMsg, generatedCode);
+    setSelectedImage(null);
+    handleGenerateVideo(userMsg, generatedCode, currentImage || undefined);
   };
 
   const width = ratio === "16:9" ? 1920 : 1080;
@@ -474,11 +490,14 @@ function CreateContent() {
                     <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${msg.role === "user" ? "bg-primary text-primary-foreground mx-3" : "bg-muted border border-border mx-3"}`}>
                       {msg.role === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
                     </div>
-                    <div className={`p-3 rounded-2xl text-sm whitespace-pre-wrap ${
+                    <div className={`p-3 rounded-2xl text-sm whitespace-pre-wrap flex flex-col gap-2 ${
                       msg.role === "user" 
                         ? `bg-primary text-primary-foreground ${dir === 'rtl' ? 'rounded-tl-sm' : 'rounded-tr-sm'}`
                         : `bg-muted border border-border ${dir === 'rtl' ? 'rounded-tr-sm' : 'rounded-tl-sm'} text-foreground`
                     }`}>
+                      {msg.image && (
+                        <img src={msg.image} alt="Uploaded content" className="max-w-full rounded-md border border-primary-foreground/20" />
+                      )}
                       {msg.content}
                     </div>
                   </div>
@@ -504,19 +523,46 @@ function CreateContent() {
 
             {/* Chat Input */}
             <div className="p-4 bg-background border-t border-border flex flex-col gap-3">
+              {selectedImage && (
+                <div className="relative w-20 h-20 rounded-md overflow-hidden border border-border">
+                  <img src={selectedImage} alt="Selected" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImage(null)}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-0.5 hover:bg-black/70"
+                  >
+                    <Plus className="h-3 w-3 rotate-45" />
+                  </button>
+                </div>
+              )}
               <form onSubmit={handleSendMessage} className="relative flex flex-col gap-2">
                 <div className="relative flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`absolute ${dir === 'rtl' ? 'right-3' : 'left-3'} p-1.5 text-muted-foreground hover:text-foreground transition-colors`}
+                    disabled={isGenerating}
+                  >
+                    <ImageIcon className="h-5 w-5" />
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageUpload}
+                    accept="image/*"
+                    className="hidden"
+                  />
                   <input
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     placeholder={t("create.placeholder")}
-                    className={`w-full bg-muted border border-border rounded-full ${dir === 'rtl' ? 'pr-4 pl-12' : 'pl-4 pr-12'} py-3 text-sm focus:ring-2 focus:ring-primary focus:outline-none`}
+                    className={`w-full bg-muted border border-border rounded-full ${dir === 'rtl' ? 'pr-12 pl-12' : 'pl-12 pr-12'} py-3 text-sm focus:ring-2 focus:ring-primary focus:outline-none`}
                     disabled={isGenerating}
                   />
                   <button 
                     type="submit"
-                    disabled={!input.trim() || isGenerating}
+                    disabled={(!input.trim() && !selectedImage) || isGenerating}
                     className={`absolute ${dir === 'rtl' ? 'left-1.5' : 'right-1.5'} p-2 bg-primary text-primary-foreground rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors`}
                   >
                     <Send className={`h-4 w-4 ${dir === 'rtl' ? 'rotate-180' : ''}`} />

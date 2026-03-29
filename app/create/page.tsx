@@ -1,9 +1,10 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useEffect, Suspense, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
-import { Send, Download, Plus, Play, Pause, Settings2, Sparkles, Bot, User, Loader2, Image as ImageIcon, Code, Upload, Repeat, MessageSquare } from "lucide-react";
+import { Send, Download, Plus, Play, Pause, Settings2, Sparkles, Bot, User, Loader2, Image as ImageIcon, Code, Upload, Repeat, MessageSquare, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/language-provider";
 import { generateVideoScript } from "@/utils/generate";
@@ -115,24 +116,26 @@ function CreateContent() {
     { id: "1", role: "ai", content: t("create.initialAiMsg") || "Hello! I'm Deeb Motion AI. How can I help you create a video today?" }
   ]);
   const [input, setInput] = useState("");
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [isSeamlessLoop, setIsSeamlessLoop] = useState(initialLoop);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string>("");
   const [generatedCode, setGeneratedCode] = useState<string>("");
   const [isRendering, setIsRendering] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(projectIdParam);
   const [projectTitle, setProjectTitle] = useState<string>("Untitled Project");
   const [ratio, setRatio] = useState<string>(initialRatio);
-  const [durationInSeconds, setDurationInSeconds] = useState<number>(parseInt(initialDurationStr.replace("s", ""), 10) || 5);
+  const [durationInSeconds, setDurationInSeconds] = useState<number | "auto">(initialDurationStr === "auto" ? "auto" : (parseInt(initialDurationStr.replace("s", ""), 10) || 5));
   const [activeView, setActiveView] = useState<"preview" | "code">("preview");
   const [editedCode, setEditedCode] = useState<string>("");
   const [showProperties, setShowProperties] = useState(false);
   const [mobileView, setMobileView] = useState<"chat" | "preview">("chat");
   const playerRef = useRef<PlayerRef>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fps = 30;
-  const totalFrames = durationInSeconds * fps;
+  const totalFrames = (durationInSeconds === "auto" ? 5 : durationInSeconds) * fps;
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
@@ -274,14 +277,28 @@ function CreateContent() {
     return () => clearTimeout(timeoutId);
   }, [generatedCode, messages, user, projectId, projectTitle, ratio, durationInSeconds]);
 
-  const handleGenerateVideo = async (userPrompt: string, currentCode?: string, imageBase64?: string) => {
+  const handleGenerateVideo = async (userPrompt: string, currentCode?: string, imageArray?: string[]) => {
+    if (isGenerating) return;
+    
     setIsGenerating(true);
+    setGenerationStatus("generating");
+    
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
     
     try {
-      const result = await generateVideoScript(userPrompt, durationInSeconds, fps, currentCode, imageBase64, isSeamlessLoop);
+      let result;
+      result = await generateVideoScript(userPrompt, durationInSeconds, fps, currentCode, imageArray, isSeamlessLoop, signal);
+      
+      if (signal.aborted) {
+        return; // Handled by handleCancel
+      }
       
       if (result.success && result.code) {
         setGeneratedCode(result.code);
+        if (result.durationInSeconds) {
+          setDurationInSeconds(result.durationInSeconds);
+        }
         setMessages(prev => [...prev, { 
           id: generateId(), 
           role: "ai", 
@@ -295,6 +312,7 @@ function CreateContent() {
         throw new Error(result.error || "Failed to generate");
       }
     } catch (error: any) {
+      if (signal.aborted) return;
       console.error("Error:", error);
       setMessages(prev => [...prev, { 
         id: generateId(), 
@@ -302,8 +320,24 @@ function CreateContent() {
         content: t("create.error")
       }]);
     } finally {
-      setIsGenerating(false);
+      if (!signal.aborted) {
+        setIsGenerating(false);
+      }
     }
+  };
+
+  const handleCancelGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsGenerating(false);
+    setGenerationStatus("");
+    setMessages(prev => [...prev, { 
+      id: generateId(), 
+      role: "ai", 
+      content: language === "ar" ? "تم إلغاء عملية الإنشاء بناءً على طلبك." : "Generation cancelled as per your request."
+    }]);
   };
 
   const handleExport = async () => {
@@ -324,10 +358,20 @@ function CreateContent() {
     try {
       const renderUrl = process.env.NEXT_PUBLIC_RENDERER_URL || "https://render-deeb-motion-ai.up.railway.app/api/render";
       
+      let exportDuration = durationInSeconds;
+      if (exportDuration === "auto") {
+        const match = generatedCode.match(/durationInSeconds:\s*(\d+)/);
+        if (match && match[1]) {
+          exportDuration = parseInt(match[1], 10);
+        } else {
+          exportDuration = 5; // fallback
+        }
+      }
+
       const response = await fetch(renderUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: generatedCode, ratio, durationInSeconds })
+        body: JSON.stringify({ code: generatedCode, ratio, durationInSeconds: exportDuration })
       });
 
       if (!response.ok) {
@@ -371,16 +415,28 @@ function CreateContent() {
       setTimeout(() => {
         if (!isMounted) return;
         
-        const initialImage = sessionStorage.getItem('initial_image');
-        if (initialImage) {
-          sessionStorage.removeItem('initial_image');
+        let initialImages: string[] = [];
+        const storedImages = sessionStorage.getItem('initial_images');
+        if (storedImages) {
+          try {
+            initialImages = JSON.parse(storedImages);
+          } catch (e) {
+            console.error(e);
+          }
+          sessionStorage.removeItem('initial_images');
+        } else {
+          const initialImage = sessionStorage.getItem('initial_image');
+          if (initialImage) {
+            initialImages = [initialImage];
+            sessionStorage.removeItem('initial_image');
+          }
         }
         
         setMessages(prev => {
           if (prev.some(m => m.id === "init")) return prev;
-          return [...prev, { id: "init", role: "user", content: initialPrompt, image: initialImage || undefined }];
+          return [...prev, { id: "init", role: "user", content: initialPrompt, image: initialImages[0] || undefined }];
         });
-        handleGenerateVideo(initialPrompt, undefined, initialImage || undefined);
+        handleGenerateVideo(initialPrompt, undefined, initialImages.length > 0 ? initialImages : undefined);
       }, 0);
     } 
     // Handle initial code mode
@@ -410,31 +466,36 @@ function CreateContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, initialMode]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setSelectedImage(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    const promises = Array.from(files).map(file => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+    });
+
+    const base64Images = await Promise.all(promises);
+    setSelectedImages(prev => [...prev, ...base64Images]);
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!input.trim() && !selectedImage) || isGenerating) return;
+    if ((!input.trim() && selectedImages.length === 0) || isGenerating) return;
     
     const userMsg = input.trim() || (language === "ar" ? "صورة مرفقة" : "Attached image");
-    const currentImage = selectedImage;
+    const currentImages = [...selectedImages];
     
     const newMessage: Message = { id: generateId(), role: "user", content: userMsg };
-    if (currentImage) newMessage.image = currentImage;
+    if (currentImages.length > 0) newMessage.image = currentImages[0]; // For display, just show the first one
     
     setMessages(prev => [...prev, newMessage]);
     setInput("");
-    setSelectedImage(null);
-    handleGenerateVideo(userMsg, generatedCode, currentImage || undefined);
+    setSelectedImages([]);
+    handleGenerateVideo(userMsg, generatedCode, currentImages.length > 0 ? currentImages : undefined);
   };
 
   const width = ratio === "16:9" ? 1920 : 1080;
@@ -551,54 +612,94 @@ function CreateContent() {
             <div 
               className="p-4 bg-background border-t border-border flex flex-col gap-3"
               onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onDrop={(e) => {
+              onDrop={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const file = e.dataTransfer.files?.[0];
-                if (file && file.type.startsWith('image/')) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => setSelectedImage(reader.result as string);
-                  reader.readAsDataURL(file);
+                const files = e.dataTransfer.files;
+                if (!files) return;
+                
+                const promises = Array.from(files)
+                  .filter(file => file.type.startsWith('image/'))
+                  .map(file => {
+                    return new Promise<string>((resolve) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolve(reader.result as string);
+                      reader.readAsDataURL(file);
+                    });
+                  });
+                
+                const base64Images = await Promise.all(promises);
+                if (base64Images.length > 0) {
+                  setSelectedImages(prev => [...prev, ...base64Images]);
                 }
               }}
-              onPaste={(e) => {
+              onPaste={async (e) => {
                 const items = e.clipboardData?.items;
                 if (!items) return;
-                for (let i = 0; i < items.length; i++) {
-                  if (items[i].type.indexOf('image') !== -1) {
-                    const file = items[i].getAsFile();
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => setSelectedImage(reader.result as string);
-                      reader.readAsDataURL(file);
-                    }
-                    break;
-                  }
+
+                const imageItems = Array.from(items).filter(item => item.type.indexOf('image') !== -1);
+                if (imageItems.length === 0) return;
+
+                const promises = imageItems.map(item => {
+                  const file = item.getAsFile();
+                  if (!file) return Promise.resolve(null);
+                  return new Promise<string | null>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.readAsDataURL(file);
+                  });
+                });
+
+                const base64Images = (await Promise.all(promises)).filter(Boolean) as string[];
+                if (base64Images.length > 0) {
+                  setSelectedImages(prev => [...prev, ...base64Images]);
                 }
               }}
             >
-              {selectedImage && (
-                <div className="relative w-20 h-20 rounded-md overflow-hidden border border-border">
-                  <img src={selectedImage} alt="Selected" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setSelectedImage(null)}
-                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-0.5 hover:bg-black/70"
-                  >
-                    <Plus className="h-3 w-3 rotate-45" />
-                  </button>
+              {selectedImages.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto py-2 scrollbar-hide">
+                  {selectedImages.map((img, index) => (
+                    <div key={index} className="relative w-20 h-20 rounded-md overflow-hidden shrink-0 border border-border">
+                      <img src={img} alt={`Selected ${index + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== index))}
+                        className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-0.5 hover:bg-black/70"
+                      >
+                        <Plus className="h-3 w-3 rotate-45" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
               <form onSubmit={handleSendMessage} className="relative flex flex-col gap-2">
                 <div className="flex items-center justify-between px-1 mb-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsSeamlessLoop(!isSeamlessLoop)}
-                    className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-md transition-colors ${isSeamlessLoop ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
-                  >
-                    <Repeat className="h-3.5 w-3.5" />
-                    {language === "ar" ? "فيديو لا نهائي (Loop)" : "Seamless Loop"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsSeamlessLoop(!isSeamlessLoop)}
+                      className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-md transition-colors ${isSeamlessLoop ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                    >
+                      <Repeat className="h-3.5 w-3.5" />
+                      {language === "ar" ? "فيديو لا نهائي (Loop)" : "Seamless Loop"}
+                    </button>
+                    <div className="relative flex items-center">
+                      <select
+                        value={durationInSeconds}
+                        onChange={(e) => setDurationInSeconds(e.target.value === "auto" ? "auto" : Number(e.target.value))}
+                        className={`appearance-none bg-transparent text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted py-1 rounded-md transition-colors focus:outline-none cursor-pointer ${dir === 'rtl' ? 'pl-6 pr-2' : 'pr-6 pl-2'}`}
+                      >
+                        <option value="auto" className="bg-background text-foreground">{t("form.duration.auto") || "Auto"}</option>
+                        <option value={5} className="bg-background text-foreground">{t("form.duration.5s") || "5s"}</option>
+                        <option value={10} className="bg-background text-foreground">{t("form.duration.10s") || "10s"}</option>
+                        <option value={15} className="bg-background text-foreground">{t("form.duration.15s") || "15s"}</option>
+                        <option value={30} className="bg-background text-foreground">{t("form.duration.30s") || "30s"}</option>
+                        <option value={45} className="bg-background text-foreground">{t("form.duration.45s") || "45s"}</option>
+                        <option value={60} className="bg-background text-foreground">{t("form.duration.60s") || "60s"}</option>
+                      </select>
+                      <ChevronDown className={`absolute ${dir === 'rtl' ? 'left-1' : 'right-1'} top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none`} />
+                    </div>
+                  </div>
                 </div>
                 <div className="relative flex items-center">
                   <button
@@ -614,6 +715,7 @@ function CreateContent() {
                     ref={fileInputRef}
                     onChange={handleImageUpload}
                     accept="image/*"
+                    multiple
                     className="hidden"
                   />
                   <input
@@ -626,7 +728,7 @@ function CreateContent() {
                   />
                   <button 
                     type="submit"
-                    disabled={(!input.trim() && !selectedImage) || isGenerating}
+                    disabled={(!input.trim() && selectedImages.length === 0) || isGenerating}
                     className={`absolute ${dir === 'rtl' ? 'left-1.5' : 'right-1.5'} p-2 bg-primary text-primary-foreground rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors`}
                   >
                     <Send className={`h-4 w-4 ${dir === 'rtl' ? 'rotate-180' : ''}`} />
@@ -688,16 +790,25 @@ function CreateContent() {
         </div>
 
         {activeView === "preview" ? (
-          <div className="flex-1 flex items-center justify-center p-8 pt-20">
-            <div className="relative w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-border/50 flex items-center justify-center" dir="ltr">
+          <div className="flex-1 flex items-center justify-center p-4 pt-16 md:p-8 md:pt-20 overflow-hidden">
+            <div className="relative w-full h-full max-w-4xl bg-black rounded-2xl overflow-hidden shadow-2xl border border-border/50 flex items-center justify-center" dir="ltr">
               
               {isGenerating ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-md z-20">
                   <Loader2 className="h-12 w-12 text-primary animate-spin mb-4" />
-                  <h3 className="text-xl font-medium text-white mb-2">{t("create.generatingVideo")}</h3>
-                  <p className="text-muted-foreground max-w-md text-center">
+                  <h3 className="text-xl font-medium text-white mb-2">
+                    {t("create.generatingVideo")}
+                  </h3>
+                  <p className="text-muted-foreground max-w-md text-center px-4 mb-6">
                     {t("create.creatingMasterpiece")}
                   </p>
+                  <button 
+                    onClick={handleCancelGeneration}
+                    className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 px-6 py-2 rounded-full font-medium transition-colors flex items-center gap-2"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                    {language === "ar" ? "إلغاء الإنشاء" : "Cancel Generation"}
+                  </button>
                 </div>
               ) : generatedCode ? (
                 <Player
@@ -710,8 +821,8 @@ function CreateContent() {
                   fps={fps}
                   style={{
                     width: "100%",
-                    aspectRatio: ratio === "16:9" ? "16/9" : "9/16",
-                    maxHeight: "100%",
+                    height: "100%",
+                    objectFit: "contain",
                   }}
                   controls
                   autoPlay

@@ -79,3 +79,26 @@
   0% { transform: translate3d(0, 0, 0); }
   100% { transform: translate3d(-40px, -40px, 0); }
 }
+
+@keyframes grid-move {
+  0% { background-position: 0px 0px; }
+  100% { background-position: 0px 64px; }
+}
+
+@keyframes orb-float-1 {
+  0%, 100% { transform: translate(0%, 0%) scale(1); }
+  25% { transform: translate(5%, 5%) scale(1.1); }
+  75% { transform: translate(-2%, 8%) scale(0.9); }
+}
+
+@keyframes orb-float-2 {
+  0%, 100% { transform: translate(0%, 0%) scale(1); }
+  25% { transform: translate(-5%, -5%) scale(1.1); }
+  75% { transform: translate(8%, -2%) scale(0.9); }
+}
+
+@keyframes orb-float-3 {
+  0%, 100% { transform: translate(0%, 0%) scale(1); }
+  25% { transform: translate(10%, -10%) scale(1.1); }
+  75% { transform: translate(-10%, 10%) scale(0.9); }
+}

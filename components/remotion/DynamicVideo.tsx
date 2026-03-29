@@ -1,6 +1,8 @@
 import React, { useMemo } from "react";
 import { transform } from "sucrase";
 import * as Remotion from "remotion";
+import * as LucideIcons from "lucide-react";
+import * as MotionComponents from "@/components/motion";
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: {children: React.ReactNode}) {
@@ -38,6 +40,8 @@ export const DynamicVideo: React.FC<{ code: string }> = ({ code }) => {
       const require = (moduleName: string) => {
         if (moduleName === "react") return React;
         if (moduleName === "remotion") return Remotion;
+        if (moduleName === "lucide-react") return LucideIcons;
+        if (moduleName === "@/components/motion") return MotionComponents;
         throw new Error(`Module ${moduleName} not found`);
       };
 

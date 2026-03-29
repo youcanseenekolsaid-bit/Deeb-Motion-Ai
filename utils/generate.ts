@@ -2,8 +2,17 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-export async function generateVideoScript(prompt: string, durationInSeconds: number, fps: number = 30, currentCode?: string, imageBase64?: string, isSeamlessLoop?: boolean) {
+export async function generateVideoScript(
+  prompt: string, 
+  durationInSeconds: number | "auto", 
+  fps: number = 30, 
+  currentCode?: string, 
+  imageArray?: string[], 
+  isSeamlessLoop?: boolean,
+  abortSignal?: AbortSignal
+) {
   try {
+    if (abortSignal?.aborted) throw new Error("AbortError");
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error("Gemini API key is missing.");
@@ -16,9 +25,10 @@ You are an expert Remotion video developer and a helpful AI assistant.
 Your task is to generate or modify a production-ready TSX file based on the user's description.
 
 Output requirements
-You must return a JSON object with two fields:
+You must return a JSON object with three fields:
 1. "message": A conversational response explaining what you are doing or what you have changed. Be friendly and concise. Respond in the same language as the user's prompt (e.g. if Arabic, respond in Arabic).
 2. "code": The complete TSX code for the Remotion video.
+3. "durationInSeconds": The duration of the video in seconds.
 
 Video specs
 Aspect ratio
@@ -26,7 +36,7 @@ Use 16:9 or 9:16 if the user requests it
 If the user does not specify, use 1920x1080
 
 Duration
-Maximum 10 seconds
+${durationInSeconds === "auto" ? "The user requested an 'auto' duration. Please determine the best duration for this video based on the prompt and ensure your code reflects it. The duration should be between 5 and 60 seconds." : `Exactly ${durationInSeconds} seconds.`}
 
 FPS
 30
@@ -35,7 +45,9 @@ Code structure mandatory
 Your output MUST follow this exact structure and sections:
 
 import React from 'react';
-import { useCurrentFrame, useVideoConfig, interpolate, Easing, AbsoluteFill } from 'remotion';
+import { useCurrentFrame, useVideoConfig, interpolate, Easing, AbsoluteFill, spring, Sequence, Series } from 'remotion';
+import { AnimatedText, PopOutImage, GridBackground, FloatingIcon } from '@/components/motion';
+import * as LucideIcons from 'lucide-react';
 
 // =============================================================================
 // COMPOSITION CONFIG (Required for auto-discovery)
@@ -76,14 +88,21 @@ const [ComponentName]: React.FC = () => {
 
 export default [ComponentName];
 
-Animation rules
-1. ALL animations must be frame based using useCurrentFrame() and interpolate()
-2. NEVER use useState, useEffect, setTimeout, or CSS animations
-3. Use extrapolateLeft: 'clamp' and extrapolateRight: 'clamp' to prevent value overflow
-4. Use Easing functions for professional motion (example: easing: Easing.out(Easing.ease) - do not call the inner function, or use Easing.bezier(0.25, 0.1, 0.25, 1))
-5. Stagger animations logically, do not animate everything at once
-6. The composition ID cannot have underscores or hyphens
-7. Make sure text components are clear and big enough to be seen on mobile screens
+Animation & Design Rules (Dan Koe Style)
+1. Use Spring Physics: For professional motion, use \`spring()\` instead of linear \`interpolate()\` whenever possible. This gives a "bouncy" and smooth feel.
+2. Use Sequences & Series: Divide your video into logical scenes using \`<Sequence>\` or \`<Series>\`.
+3. Use Pre-built Motion Components:
+   - \`<AnimatedText text="Hello" delay={10} wordByWord={true} style={{...}} />\` for text that appears character by character or word by word.
+   - \`<PopOutImage src="url" delay={5} style={{...}} />\` for images that pop in.
+   - \`<GridBackground color="rgba(255,255,255,0.1)" backgroundColor="#0a0a0a" gridSize={60} speed={1} />\` for a moving grid background.
+   - \`<FloatingIcon icon={<LucideIcons.Star color="yellow" size={100} />} delay={0} />\` for floating SVG icons.
+4. Use Lucide Icons: For graphics, use \`lucide-react\` icons (e.g., \`<LucideIcons.Rocket size={200} color="white" />\`). They are SVGs and look highly professional.
+5. Fetching Images: If you need real images, use \`https://source.unsplash.com/random/800x800/?keyword\` (replace keyword).
+6. ALL animations must be frame based using useCurrentFrame() and interpolate() or spring()
+7. NEVER use useState, useEffect, setTimeout, or CSS animations
+8. Use extrapolateLeft: 'clamp' and extrapolateRight: 'clamp' to prevent value overflow
+9. The composition ID cannot have underscores or hyphens
+10. Make sure text components are clear and big enough to be seen on mobile screens
 
 Layout rules
 1. Use AbsoluteFill as the root container
@@ -122,13 +141,23 @@ The user has requested a SEAMLESS LOOP video. You MUST ensure that the very last
 - Ensure there are no sudden jumps or cuts when the video restarts.`;
     }
 
-    const userText = currentCode 
-      ? `Current Code:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n\nUser Request: "${prompt}"\n\nPlease modify the current code to fulfill the user's request.`
-      : `User Prompt: "${prompt}"`;
+    const parts: any[] = [];
+    if (currentCode) {
+      parts.push({ text: `Current Code:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n\nUser Request: "${prompt}"\n\nPlease modify the current code to fulfill the user's request.` });
+    } else {
+      parts.push({ text: `User Prompt: "${prompt}"` });
+    }
 
-    const userContent: any = imageBase64 
-      ? { parts: [{ text: userText }, { inlineData: { data: imageBase64.split(',')[1] || imageBase64, mimeType: imageBase64.split(';')[0].split(':')[1] || 'image/jpeg' } }] }
-      : userText;
+    if (imageArray && imageArray.length > 0) {
+      imageArray.forEach(img => {
+        const base64Data = img.split(',')[1] || img;
+        const mimeTypeMatch = img.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : 'image/jpeg';
+        parts.push({ inlineData: { data: base64Data, mimeType } });
+      });
+    }
+
+    const userContent = { parts };
 
     const config = {
       systemInstruction: systemPrompt + "\n\nCRITICAL: Ensure the generated code is valid TypeScript and JSX. Do not use unescaped characters in JSX text. Always close tags properly. Do not use any undefined variables.",
@@ -144,20 +173,26 @@ The user has requested a SEAMLESS LOOP video. You MUST ensure that the very last
           code: {
             type: Type.STRING,
             description: "The complete TSX code for the Remotion video."
+          },
+          durationInSeconds: {
+            type: Type.NUMBER,
+            description: "The duration of the video in seconds. If the user requested 'auto', provide your chosen duration here."
           }
         },
-        required: ["message", "code"]
+        required: ["message", "code", "durationInSeconds"]
       }
     };
 
     let response;
     try {
+      if (abortSignal?.aborted) throw new Error("AbortError");
       response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
         contents: userContent,
         config
       });
     } catch (primaryError: any) {
+      if (abortSignal?.aborted) throw new Error("AbortError");
       console.warn("Primary model (gemini-3.1-pro-preview) failed, falling back to gemini-3-pro-preview. Error:", primaryError.message);
       try {
         response = await ai.models.generateContent({
@@ -166,6 +201,7 @@ The user has requested a SEAMLESS LOOP video. You MUST ensure that the very last
           config
         });
       } catch (secondaryError: any) {
+        if (abortSignal?.aborted) throw new Error("AbortError");
         console.warn("Secondary model (gemini-3-pro-preview) failed, falling back to gemini-3-flash-preview. Error:", secondaryError.message);
         response = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
@@ -175,12 +211,21 @@ The user has requested a SEAMLESS LOOP video. You MUST ensure that the very last
       }
     }
 
+    if (abortSignal?.aborted) throw new Error("AbortError");
+
     const jsonStr = response.text?.trim() || "{}";
     const parsed = JSON.parse(jsonStr);
 
-    return { success: true, code: parsed.code, message: parsed.message };
+    return { success: true, code: parsed.code, message: parsed.message, durationInSeconds: parsed.durationInSeconds };
   } catch (error: any) {
+    if (error.message === "AbortError") {
+      return { success: false, error: "AbortError" };
+    }
     console.error("Error generating script:", error);
-    return { success: false, error: error.message || "Failed to generate video script." };
+    let errorMessage = error.message || "Failed to generate video script.";
+    if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
+      errorMessage = "عذراً، لقد تجاوزت الحد المسموح به من الطلبات (Quota Exceeded). يرجى المحاولة مرة أخرى لاحقاً أو التحقق من خطة الفوترة الخاصة بك.";
+    }
+    return { success: false, error: errorMessage };
   }
 }

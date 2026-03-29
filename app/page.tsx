@@ -1,7 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { motion } from "motion/react";
 import { Sparkles, Clock, MonitorPlay, Smartphone, Play, ArrowRight, Wand2, ChevronDown, Zap, FolderOpen, Code, Image as ImageIcon, Plus, Repeat } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -10,17 +10,15 @@ import { useLanguage } from "@/components/language-provider";
 import { useAuth } from "@/components/auth-provider";
 import { collection, query, where, getDocs, limit, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Thumbnail } from "@remotion/player";
-import { DynamicVideo } from "@/components/remotion/DynamicVideo";
 
 export default function LandingPage() {
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<"prompt" | "code">("prompt");
-  const [duration, setDuration] = useState("5s");
+  const [duration, setDuration] = useState("auto");
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [isFocused, setIsFocused] = useState(false);
   const [isDurationOpen, setIsDurationOpen] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [isSeamlessLoop, setIsSeamlessLoop] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [projects, setProjects] = useState<any[]>([]);
@@ -66,11 +64,11 @@ export default function LandingPage() {
 
   const handleGenerate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (prompt.trim() || selectedImage) {
-      if (selectedImage) {
-        sessionStorage.setItem('initial_image', selectedImage);
+    if (prompt.trim() || selectedImages.length > 0) {
+      if (selectedImages.length > 0) {
+        sessionStorage.setItem('initial_images', JSON.stringify(selectedImages));
       } else {
-        sessionStorage.removeItem('initial_image');
+        sessionStorage.removeItem('initial_images');
       }
       
       const loopParam = isSeamlessLoop ? "&loop=true" : "";
@@ -84,15 +82,20 @@ export default function LandingPage() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setSelectedImage(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    const promises = Array.from(files).map(file => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+    });
+
+    const base64Images = await Promise.all(promises);
+    setSelectedImages(prev => [...prev, ...base64Images]);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,71 +112,60 @@ export default function LandingPage() {
     reader.readAsText(file);
   };
 
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageItems = Array.from(items).filter(item => item.type.indexOf('image') !== -1);
+    if (imageItems.length === 0) return;
+
+    const promises = imageItems.map(item => {
+      const file = item.getAsFile();
+      if (!file) return Promise.resolve(null);
+      return new Promise<string | null>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+    });
+
+    const base64Images = (await Promise.all(promises)).filter(Boolean) as string[];
+    if (base64Images.length > 0) {
+      setSelectedImages(prev => [...prev, ...base64Images]);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center w-full relative min-h-screen">
       {/* Animated 3D Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10 bg-background">
         {/* Animated Grid Background */}
         <div className="absolute inset-0 [mask-image:radial-gradient(ellipse_80%_50%_at_50%_0%,#000_70%,transparent_100%)]">
-          <motion.div 
+          <div 
             className="absolute inset-0 bg-[linear-gradient(to_right,rgba(139,92,246,0.1)_1px,transparent_1px),linear-gradient(to_bottom,rgba(139,92,246,0.1)_1px,transparent_1px)] bg-[size:4rem_4rem]"
-            animate={{
-              backgroundPosition: ["0px 0px", "0px 64px"]
-            }}
-            transition={{
-              repeat: Infinity,
-              ease: "linear",
-              duration: 3
-            }}
+            style={{ animation: 'grid-move 3s linear infinite' }}
           />
         </div>
         
         {/* Animated Orbs */}
-        <motion.div
-          animate={{
-            transform: [
-              "translate(0%, 0%) scale(1)",
-              "translate(5%, 5%) scale(1.1)",
-              "translate(-2%, 8%) scale(0.9)",
-              "translate(0%, 0%) scale(1)"
-            ]
-          }}
-          transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
+        <div
+          style={{ animation: 'orb-float-1 15s ease-in-out infinite' }}
           className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-primary/20 dark:bg-primary/20 mix-blend-multiply dark:mix-blend-screen filter blur-[100px] opacity-70"
         />
-        <motion.div
-          animate={{
-            transform: [
-              "translate(0%, 0%) scale(1)",
-              "translate(-5%, -5%) scale(1.1)",
-              "translate(8%, -2%) scale(0.9)",
-              "translate(0%, 0%) scale(1)"
-            ]
-          }}
-          transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+        <div
+          style={{ animation: 'orb-float-2 18s ease-in-out infinite' }}
           className="absolute bottom-[-10%] right-[-10%] w-[60vw] h-[60vw] rounded-full bg-blue-500/20 dark:bg-blue-500/20 mix-blend-multiply dark:mix-blend-screen filter blur-[120px] opacity-70"
         />
-        <motion.div
-          animate={{
-            transform: [
-              "translate(0%, 0%) scale(1)",
-              "translate(10%, -10%) scale(1.1)",
-              "translate(-10%, 10%) scale(0.9)",
-              "translate(0%, 0%) scale(1)"
-            ]
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+        <div
+          style={{ animation: 'orb-float-3 20s ease-in-out infinite' }}
           className="absolute top-[20%] left-[20%] w-[40vw] h-[40vw] rounded-full bg-purple-500/20 dark:bg-purple-500/20 mix-blend-multiply dark:mix-blend-screen filter blur-[100px] opacity-70"
         />
       </div>
 
       {/* Hero Section */}
       <section className="w-full max-w-5xl px-4 pt-20 pb-16 md:pt-32 md:pb-24 flex flex-col items-center text-center relative z-10">
-        <motion.h1 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="relative text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-6"
+        <h1 
+          className="relative text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight mb-6 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100 fill-mode-both"
         >
           {/* Text Glow Effect */}
           <div className="absolute inset-0 blur-3xl opacity-30 bg-gradient-to-r from-primary/40 via-purple-500/40 to-blue-500/40 -z-10 animate-pulse" />
@@ -184,65 +176,41 @@ export default function LandingPage() {
           <span className="block text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-purple-600 drop-shadow-[0_0_15px_rgba(168,85,247,0.3)]">
             {t("hero.title2")}
           </span>
-        </motion.h1>
+        </h1>
         
-        <motion.p 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="text-lg md:text-xl text-slate-400 max-w-2xl mb-16 drop-shadow-sm"
+        <p 
+          className="text-lg md:text-xl text-slate-400 max-w-2xl mb-16 drop-shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200 fill-mode-both"
         >
           {t("hero.subtitle")}
-        </motion.p>
+        </p>
 
         {/* Generator Form with Animated Halo */}
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="relative w-full max-w-5xl z-20"
+        <div 
+          className="relative w-full max-w-5xl z-20 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 fill-mode-both"
         >
           {/* Outer Glowing Halo */}
-          <motion.div
-            animate={{
-              opacity: isFocused ? 0.8 : 0.3,
-              scale: isFocused ? 1.02 : 1,
-            }}
-            transition={{
-              opacity: { duration: 0.4, ease: "easeOut" },
-              scale: { duration: 0.4, ease: "easeOut" },
-            }}
-            className="absolute -inset-3 rounded-[2rem] blur-2xl z-0 overflow-hidden"
+          <div
+            className={`absolute -inset-3 rounded-[2rem] blur-2xl z-0 overflow-hidden transition-all duration-400 ease-out ${isFocused ? 'opacity-80 scale-[1.02]' : 'opacity-30 scale-100'}`}
           >
-            <motion.div 
-              animate={{ rotate: 360 }}
-              transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-              className="absolute inset-[-50%] bg-[conic-gradient(from_0deg,transparent_0_340deg,white_360deg)] opacity-50"
+            <div 
+              className="absolute inset-[-50%] bg-[conic-gradient(from_0deg,transparent_0_340deg,white_360deg)] opacity-50 animate-[spin_8s_linear_infinite]"
             />
             <div className="absolute inset-0 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-80 mix-blend-overlay" />
-          </motion.div>
+          </div>
           
           {/* Inner Border Glow */}
-          <motion.div
-            animate={{
-              opacity: isFocused ? 1 : 0.4,
-            }}
-            transition={{
-              opacity: { duration: 0.3 },
-            }}
-            className="absolute -inset-[2px] rounded-3xl z-0 overflow-hidden"
+          <div
+            className={`absolute -inset-[2px] rounded-3xl z-0 overflow-hidden transition-opacity duration-300 ${isFocused ? 'opacity-100' : 'opacity-40'}`}
           >
-            <motion.div 
-              animate={{ rotate: -360 }}
-              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-              className="absolute inset-[-100%] bg-[conic-gradient(from_0deg,transparent_0_300deg,#8b5cf6_360deg)]"
+            <div 
+              className="absolute inset-[-100%] bg-[conic-gradient(from_0deg,transparent_0_300deg,#8b5cf6_360deg)] animate-[spin_4s_linear_infinite_reverse]"
             />
             <div className="absolute inset-[2px] rounded-[22px] bg-background/90 backdrop-blur-3xl" />
-          </motion.div>
+          </div>
 
           <form 
             onSubmit={handleGenerate}
-            className="relative bg-slate-900/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-10 flex flex-col z-10 shadow-2xl w-full max-w-[1200px] mx-auto"
+            className="relative bg-slate-900/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-4 sm:p-10 flex flex-col z-10 shadow-2xl w-full max-w-[1200px] mx-auto"
           >
             {/* Input Type Toggle */}
             <div className="flex space-x-2 rtl:space-x-reverse bg-slate-950/50 p-1.5 rounded-xl w-fit mb-4 border border-white/5">
@@ -271,44 +239,45 @@ export default function LandingPage() {
             </div>
 
             <div 
-              className="relative bg-slate-950/50 rounded-2xl border border-white/5 p-6 mb-8"
+              className="relative bg-slate-950/50 rounded-2xl border border-white/5 p-4 sm:p-6 mb-8"
               onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onDrop={(e) => {
+              onDrop={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const file = e.dataTransfer.files?.[0];
-                if (file && file.type.startsWith('image/')) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => setSelectedImage(reader.result as string);
-                  reader.readAsDataURL(file);
-                }
-              }}
-              onPaste={(e) => {
-                const items = e.clipboardData?.items;
-                if (!items) return;
-                for (let i = 0; i < items.length; i++) {
-                  if (items[i].type.indexOf('image') !== -1) {
-                    const file = items[i].getAsFile();
-                    if (file) {
+                const files = e.dataTransfer.files;
+                if (!files) return;
+                
+                const promises = Array.from(files)
+                  .filter(file => file.type.startsWith('image/'))
+                  .map(file => {
+                    return new Promise<string>((resolve) => {
                       const reader = new FileReader();
-                      reader.onloadend = () => setSelectedImage(reader.result as string);
+                      reader.onloadend = () => resolve(reader.result as string);
                       reader.readAsDataURL(file);
-                    }
-                    break;
-                  }
+                    });
+                  });
+                
+                const base64Images = await Promise.all(promises);
+                if (base64Images.length > 0) {
+                  setSelectedImages(prev => [...prev, ...base64Images]);
                 }
               }}
+              onPaste={handlePaste}
             >
-              {selectedImage && (
-                <div className="relative w-24 h-24 mb-4 rounded-xl overflow-hidden border border-white/10">
-                  <img src={selectedImage} alt="Selected" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setSelectedImage(null)}
-                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
-                  >
-                    <Plus className="h-4 w-4 rotate-45" />
-                  </button>
+              {selectedImages.length > 0 && (
+                <div className="flex gap-3 overflow-x-auto py-2 mb-4 scrollbar-hide">
+                  {selectedImages.map((img, index) => (
+                    <div key={index} className="relative w-24 h-24 rounded-xl overflow-hidden shrink-0 border border-white/10">
+                      <img src={img} alt={`Selected ${index + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== index))}
+                        className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
+                      >
+                        <Plus className="h-4 w-4 rotate-45" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
               <textarea
@@ -318,7 +287,7 @@ export default function LandingPage() {
                 onBlur={() => setIsFocused(false)}
                 placeholder={inputType === "prompt" ? t("form.placeholder") : t("create.pasteCode")}
                 className={`w-full bg-transparent border-none resize-none focus:ring-0 focus:outline-none placeholder:text-slate-500 text-slate-200 ${inputType === "code" ? "font-mono text-sm min-h-[200px] sm:min-h-[300px]" : "text-xl sm:text-2xl min-h-[150px] sm:min-h-[260px]"}`}
-                required={!selectedImage && inputType === "prompt"}
+                required={selectedImages.length === 0 && inputType === "prompt"}
               />
               
               {/* Bottom Controls inside Textarea container */}
@@ -385,19 +354,11 @@ export default function LandingPage() {
                   </button>
 
                   {/* Dropdown Menu */}
-                  <motion.div
-                    initial={false}
-                    animate={{
-                      opacity: isDurationOpen ? 1 : 0,
-                      y: isDurationOpen ? 0 : -10,
-                      pointerEvents: isDurationOpen ? "auto" : "none",
-                      scale: isDurationOpen ? 1 : 0.95
-                    }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                    className={`absolute bottom-full ${dir === 'rtl' ? 'right-0' : 'left-0'} mb-2 w-full bg-slate-900 border border-white/10 rounded-xl shadow-xl overflow-hidden z-50 origin-bottom`}
+                  <div
+                    className={`absolute bottom-full ${dir === 'rtl' ? 'right-0' : 'left-0'} mb-2 w-full bg-slate-900 border border-white/10 rounded-xl shadow-xl overflow-hidden z-50 origin-bottom transition-all duration-200 ease-out ${isDurationOpen ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'}`}
                   >
                     <div className="p-1 flex flex-col max-h-[200px] overflow-y-auto">
-                      {["5s", "10s", "15s", "30s", "45s", "60s"].map((d) => (
+                      {["auto", "5s", "10s", "15s", "30s", "45s", "60s"].map((d) => (
                         <button
                           key={d}
                           type="button"
@@ -412,7 +373,7 @@ export default function LandingPage() {
                         </button>
                       ))}
                     </div>
-                  </motion.div>
+                  </div>
                 </div>
 
                 {/* Seamless Loop Toggle */}
@@ -467,7 +428,7 @@ export default function LandingPage() {
               </button>
             </div>
           </form>
-        </motion.div>
+        </div>
       </section>
 
       {/* Features Section */}
@@ -516,20 +477,17 @@ export default function LandingPage() {
               desc: language === "ar" ? "حفظ مشاريعك في السحابة والعودة لتعديلها في أي وقت ومن أي مكان" : "Save your projects in the cloud and edit them anytime, anywhere"
             }
           ].map((feature, i) => (
-            <motion.div 
+            <div 
               key={i} 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="bg-slate-900/50 border border-white/5 rounded-2xl p-6 hover:bg-slate-800/50 transition-colors group"
+              className="bg-slate-900/50 border border-white/5 rounded-2xl p-6 hover:bg-slate-800/50 transition-colors group animate-in fade-in slide-in-from-bottom-4 fill-mode-both"
+              style={{ animationDelay: `${i * 100}ms`, animationDuration: '500ms' }}
             >
               <div className="bg-slate-950 w-16 h-16 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-lg shadow-black/50">
                 {feature.icon}
               </div>
               <h3 className="text-xl font-bold text-white mb-3">{feature.title}</h3>
               <p className="text-slate-400 leading-relaxed text-sm">{feature.desc}</p>
-            </motion.div>
+            </div>
           ))}
         </div>
       </section>
@@ -557,7 +515,7 @@ export default function LandingPage() {
             {
               icon: <Zap className="h-8 w-8 text-blue-500" />,
               title: language === "ar" ? "2. الذكاء الاصطناعي يولد" : "2. AI Generates",
-              desc: language === "ar" ? "يقوم نظامنا بتحليل طلبك وتوليد كود الفيديو والمشاهد المعقدة في ثوانٍ." : "Our system analyzes your prompt and generates video code and complex scenes in seconds."
+              desc: language === "ar" ? "يقوم نظامنا بتحليل طلبك وتوليد كود الفيديو والمشاهد في ثوانٍ." : "Our system analyzes your prompt and generates video code and scenes in seconds."
             },
             {
               icon: <Play className="h-8 w-8 text-primary" />,
@@ -565,21 +523,18 @@ export default function LandingPage() {
               desc: language === "ar" ? "عاين الفيديو الخاص بك في الوقت الفعلي، قم بتعديله، ثم صدره بجودة عالية." : "Preview your video in real-time, tweak it, and export in high quality."
             }
           ].map((step, i) => (
-            <motion.div 
+            <div 
               key={i}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.2 }}
-              className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:border-primary/50 transition-colors"
+              className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:border-primary/50 transition-all duration-500 hover:-translate-y-2 hover:shadow-xl hover:shadow-primary/10 animate-in fade-in slide-in-from-bottom-4 fill-mode-both"
+              style={{ animationDelay: `${i * 200}ms`, animationDuration: '500ms' }}
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10 transition-transform group-hover:scale-150" />
-              <div className="bg-background border border-border w-16 h-16 rounded-2xl flex items-center justify-center mb-6 shadow-sm">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10 transition-transform duration-700 group-hover:scale-150" />
+              <div className="bg-background border border-border w-16 h-16 rounded-2xl flex items-center justify-center mb-6 shadow-sm transition-transform duration-500 group-hover:scale-110 group-hover:rotate-3">
                 {step.icon}
               </div>
               <h3 className="text-xl font-bold mb-3">{step.title}</h3>
               <p className="text-muted-foreground leading-relaxed">{step.desc}</p>
-            </motion.div>
+            </div>
           ))}
         </div>
       </section>
@@ -599,12 +554,8 @@ export default function LandingPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 auto-rows-[240px]">
           {/* Feature 1 - Large */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-            className="md:col-span-2 md:row-span-2 bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-border/50 rounded-3xl p-8 relative overflow-hidden group"
+          <div 
+            className="md:col-span-2 md:row-span-2 bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-border/50 rounded-3xl p-8 relative overflow-hidden group animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both"
           >
             <div className="absolute inset-0 bg-[url('https://picsum.photos/seed/code/800/600')] opacity-10 mix-blend-overlay group-hover:opacity-20 transition-opacity duration-500" />
             <div className="relative z-10 h-full flex flex-col justify-end">
@@ -614,15 +565,11 @@ export default function LandingPage() {
               <h3 className="text-2xl font-bold mb-2">{language === "ar" ? "توليد كود React" : "React Code Generation"}</h3>
               <p className="text-muted-foreground">{language === "ar" ? "نحن لا نولد فيديو فقط، بل نولد كود Remotion قابل للتعديل بالكامل باستخدام React." : "We don't just generate video, we generate fully editable Remotion code using React."}</p>
             </div>
-          </motion.div>
+          </div>
 
           {/* Feature 2 */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            className="md:col-span-2 bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors"
+          <div 
+            className="md:col-span-2 bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100 fill-mode-both"
           >
             <div className="flex items-start justify-between h-full flex-col">
               <div className="bg-background border border-border w-12 h-12 rounded-xl flex items-center justify-center mb-4">
@@ -633,15 +580,11 @@ export default function LandingPage() {
                 <p className="text-muted-foreground text-sm">{language === "ar" ? "شاهد التعديلات التي تجريها على الفيديو في الوقت الفعلي بدون انتظار وقت التصيير." : "See the changes you make to the video in real-time without waiting for render time."}</p>
               </div>
             </div>
-          </motion.div>
+          </div>
 
           {/* Feature 3 */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors"
+          <div 
+            className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200 fill-mode-both"
           >
             <div className="flex items-start justify-between h-full flex-col">
               <div className="bg-background border border-border w-12 h-12 rounded-xl flex items-center justify-center mb-4">
@@ -652,15 +595,11 @@ export default function LandingPage() {
                 <p className="text-muted-foreground text-sm">{language === "ar" ? "دعم كامل للمقاسات الطولية والعرضية." : "Full support for portrait and landscape sizes."}</p>
               </div>
             </div>
-          </motion.div>
+          </div>
 
           {/* Feature 4 */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-            className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors"
+          <div 
+            className="bg-muted/30 border border-border/50 rounded-3xl p-8 relative overflow-hidden group hover:bg-muted/50 transition-colors animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 fill-mode-both"
           >
             <div className="flex items-start justify-between h-full flex-col">
               <div className="bg-background border border-border w-12 h-12 rounded-xl flex items-center justify-center mb-4">
@@ -671,7 +610,7 @@ export default function LandingPage() {
                 <p className="text-muted-foreground text-sm">{language === "ar" ? "تصدير الفيديوهات بدقة عالية 1080p." : "Export videos in high definition 1080p."}</p>
               </div>
             </div>
-          </motion.div>
+          </div>
         </div>
       </section>
 
@@ -749,36 +688,16 @@ export default function LandingPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map((project, i) => (
-              <motion.div 
+              <div 
                 key={project.id}
-                initial={{ opacity: 0, scale: 0.95 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: i * 0.1 }}
-                className="group relative rounded-2xl overflow-hidden border border-border/50 bg-black aspect-video cursor-pointer shadow-sm hover:shadow-2xl hover:shadow-primary/20 hover:border-primary/50 transition-all duration-500"
+                className="group relative rounded-2xl overflow-hidden border border-border/50 bg-slate-900 aspect-video cursor-pointer shadow-sm hover:shadow-2xl hover:shadow-primary/20 hover:border-primary/50 transition-all duration-500"
                 onClick={() => router.push(`/create?projectId=${project.id}`)}
               >
-                <div className="absolute inset-0 flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity duration-500 overflow-hidden" dir="ltr">
-                  {project.code ? (
-                    <Thumbnail
-                      component={DynamicVideo}
-                      compositionWidth={project.ratio === "9:16" ? 1080 : 1920}
-                      compositionHeight={project.ratio === "9:16" ? 1920 : 1080}
-                      frameToDisplay={30}
-                      durationInFrames={150}
-                      fps={30}
-                      inputProps={{ code: project.code }}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-muted flex items-center justify-center">
-                      <MonitorPlay className="h-8 w-8 text-muted-foreground/50" />
-                    </div>
-                  )}
+                <div className="absolute inset-0 flex flex-col items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity duration-500 overflow-hidden bg-slate-950/50">
+                  <Play className="w-12 h-12 text-primary/50 group-hover:text-primary transition-colors mb-2" />
+                  <span className="text-xs text-slate-400 font-medium px-3 py-1 bg-slate-900/80 rounded-full border border-white/5">
+                    {project.ratio || "16:9"} • {project.duration || "5s"}
+                  </span>
                 </div>
                 
                 {/* Always visible gradient at bottom for text readability */}
@@ -802,7 +721,7 @@ export default function LandingPage() {
                     <Play className="h-6 w-6 fill-current ml-1" />
                   </div>
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
         )}
